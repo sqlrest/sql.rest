@@ -24,11 +24,17 @@ func init() {
 
 //
 func Select(w http.ResponseWriter, req *http.Request) {
+	defer func() {
+		if r := recover(); r != nil {
+			log.Printf("Caught panic: %v\nrequest: %v", r, req)
+			http.Error(w, fmt.Sprintf("%v", r), http.StatusInternalServerError)
+		}
+	}()
 	if sqlText, err := ioutil.ReadAll(req.Body); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	} else {
 		if db, err := sql.Open("postgres", "sslmode=disable connect_timeout=10"); err != nil {
-			log.Panic(err.Error())
+			log.Panic(err)
 		} else {
 			values := req.URL.Query()
 			cookies := req.Cookies()
@@ -77,7 +83,7 @@ func Select(w http.ResponseWriter, req *http.Request) {
 			}
 
 			if tmpl, err := template.New("").Funcs(paramFuncMap).Parse(string(sqlText)); err != nil {
-				log.Fatalf("Parse: %v", err)
+				log.Panic(err)
 			} else {
 				var sqlBuffer bytes.Buffer
 				tmpl.Execute(&sqlBuffer, replacements)
@@ -102,26 +108,28 @@ func Select(w http.ResponseWriter, req *http.Request) {
 					http.SetCookie(w, &http.Cookie{Name: n, Value: fmt.Sprintf("%+v", v)})
 				}
 
-				w.Header().Set("X-Powered-By", "sql.rest")
-				w.Header().Set("X-Request-Id", requestId)
-				w.Header().Set("X-SQL-Statement-Id", statementId)
-				w.Header().Set("X-SQL-Query-Id", queryId)
-				w.Header().Set("X-SQL-Parameters-Id", parameterId)
-				w.Header().Add("Access-Control-Allow-Origin", "*")
+				h := w.Header()
+				h.Set("Content-Type", "text/tab-separated-values; charset=utf-8")
+				h.Set("X-Powered-By", "sql.rest")
+				h.Set("X-Request-Id", requestId)
+				h.Set("X-SQL-Statement-Id", statementId)
+				h.Set("X-SQL-Query-Id", queryId)
+				h.Set("X-SQL-Parameters-Id", parameterId)
+				h.Add("Access-Control-Allow-Origin", "*")
 
 				if true {
-					w.Header().Set("X-SQL-Statement", string(sqlText))
-					w.Header().Set("X-SQL-Query", fmt.Sprintf("%s %+v", sqlText, parameters))
-					w.Header().Set("X-SQL-Parameters", fmt.Sprintf("%+v", parameters))
+					h.Set("X-SQL-Statement", string(sqlText))
+					h.Set("X-SQL-Query", fmt.Sprintf("%s %+v", sqlText, parameters))
+					h.Set("X-SQL-Parameters", fmt.Sprintf("%+v", parameters))
 				}
 			}
 
 			if rows, err := db.Query(string(sqlText), parameters...); err != nil {
-				log.Panic(err.Error())
+				log.Panic(err)
 			} else {
 				defer rows.Close()
 				if cols, err := rows.Columns(); err != nil {
-					log.Panic(err.Error())
+					log.Panic(err)
 				} else {
 
 					count := len(cols)
@@ -142,7 +150,7 @@ func Select(w http.ResponseWriter, req *http.Request) {
 						}
 						err := rows.Scan(valuePtrs...)
 						if err != nil {
-							log.Panic(err.Error())
+							log.Panic(err)
 						}
 						for i, _ := range cols {
 							var v interface{}
@@ -156,7 +164,9 @@ func Select(w http.ResponseWriter, req *http.Request) {
 							if i != 0 {
 								fmt.Fprintf(w, "\t")
 							}
-							fmt.Fprintf(w, "%v", v)
+							if v != nil {
+								fmt.Fprintf(w, "%v", v)
+							}
 						}
 						fmt.Fprintf(w, "\n")
 					}
@@ -169,7 +179,7 @@ func Select(w http.ResponseWriter, req *http.Request) {
 //
 func Test(w http.ResponseWriter, req *http.Request) {
 	if body, err := ioutil.ReadAll(req.Body); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	} else {
 
 		values := req.URL.Query()
@@ -202,7 +212,7 @@ func Test(w http.ResponseWriter, req *http.Request) {
 
 		log.Printf("paramFuncMap: %v", paramFuncMap)
 		if tmpl, err := template.New("").Funcs(paramFuncMap).Parse(string(body)); err != nil {
-			log.Fatalf("Parse: %v", err)
+			log.Panic(err)
 		} else {
 			tmpl.Execute(w, replacements)
 			fmt.Fprintf(w, "parameters %+v", parameters)
@@ -213,7 +223,7 @@ func Test(w http.ResponseWriter, req *http.Request) {
 //
 func Usage(w http.ResponseWriter, req *http.Request) {
 	if body, err := ioutil.ReadAll(req.Body); err != nil {
-		log.Fatal(err)
+		log.Panic(err)
 	} else {
 		fmt.Fprintf(w, "%v\n", string(body))
 	}
