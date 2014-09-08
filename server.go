@@ -12,6 +12,7 @@ import (
 	"log"
 	"math/rand"
 	"net/http"
+	"reflect"
 	"runtime"
 	"text/template"
 	"time"
@@ -23,13 +24,56 @@ func init() {
 }
 
 //
-func Select(w http.ResponseWriter, req *http.Request) {
+func SQL(w http.ResponseWriter, req *http.Request) {
 	defer func() {
 		if r := recover(); r != nil {
 			log.Printf("Caught panic: %v\nrequest: %v", r, req)
 			http.Error(w, fmt.Sprintf("%v", r), http.StatusInternalServerError)
 		}
 	}()
+	switch method := req.Method; method {
+	case "POST":
+		Create(w, req)
+	case "GET":
+		Read(w, req)
+	case "PUT":
+		CreateOrUpdate(w, req)
+	case "PATCH":
+		Update(w, req)
+	case "DELETE":
+		Delete(w, req)
+	default:
+		log.Printf("Method: %v", method)
+	}
+}
+
+//
+func Create(w http.ResponseWriter, req *http.Request) {
+	fmt.Fprintf(w, "Create: %v", req.Method)
+}
+
+//
+func CreateOrUpdate(w http.ResponseWriter, req *http.Request) {
+	fmt.Fprintf(w, "Create or Update: %v", req.Method)
+}
+
+//
+func Read(w http.ResponseWriter, req *http.Request) {
+	// Allow for custom formatting of different types.
+	var formatsParameters = map[string]reflect.Type{
+		"_float": reflect.TypeOf(float64(1.0)),
+		"_int":   reflect.TypeOf(int64(1)),
+	}
+	var formats = map[reflect.Type]string{
+		formatsParameters["_float"]: "g",
+		formatsParameters["_int"]:   "d",
+	}
+	for n, v := range req.URL.Query() {
+		if format, exists := formatsParameters[n]; exists {
+			log.Printf("formatting %v value %v", n, v[0])
+			formats[format] = v[0]
+		}
+	}
 	if sqlText, err := ioutil.ReadAll(req.Body); err != nil {
 		log.Panic(err)
 	} else {
@@ -98,7 +142,7 @@ func Select(w http.ResponseWriter, req *http.Request) {
 				parameterSum := md5.New()
 				for _, p := range parameters {
 					pv := fmt.Sprintf("%+v", p)
-					log.Printf("summing parameter value [%v]", pv)
+					// log.Printf("Calculating message digest for parameter value [%v]", pv)
 					parameterSum.Write([]byte(pv))
 				}
 				parameterId := fmt.Sprintf("%x", parameterSum.Sum(nil))
@@ -165,7 +209,16 @@ func Select(w http.ResponseWriter, req *http.Request) {
 								fmt.Fprintf(w, "\t")
 							}
 							if v != nil {
-								fmt.Fprintf(w, "%v", v)
+								switch v.(type) {
+								case float64, int64:
+									format, ok := formats[reflect.ValueOf(v).Type()]
+									if !ok {
+										format = "v"
+									}
+									fmt.Fprintf(w, fmt.Sprintf("%%%s", format), v)
+								default:
+									fmt.Fprintf(w, "%v", v)
+								}
 							}
 						}
 						fmt.Fprintf(w, "\n")
@@ -174,6 +227,16 @@ func Select(w http.ResponseWriter, req *http.Request) {
 			}
 		}
 	}
+}
+
+//
+func Update(w http.ResponseWriter, req *http.Request) {
+	fmt.Fprintf(w, "Update: %v", req.Method)
+}
+
+//
+func Delete(w http.ResponseWriter, req *http.Request) {
+	fmt.Fprintf(w, "Delete: %v", req.Method)
 }
 
 //
@@ -239,7 +302,7 @@ func main() {
 
 	r := mux.NewRouter()
 	r.HandleFunc("/test", Test)
-	r.HandleFunc("/sql", Select)
+	r.HandleFunc("/sql", SQL)
 	r.HandleFunc("/", Usage)
 	http.Handle("/", r)
 
