@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bytes"
 	"crypto/md5"
 	"database/sql"
 	"flag"
@@ -19,6 +18,7 @@ import (
 	"github.com/gorilla/mux"
 	_ "github.com/lib/pq"
 	"github.com/pmylund/go-cache"
+	"gopkg.in/matryer/respond.v1"
 )
 
 //
@@ -92,7 +92,7 @@ func Delete(w http.ResponseWriter, req *http.Request) {
 
 //
 func Read(w http.ResponseWriter, req *http.Request) {
-	// defer timer(req.URL.String(), "read")()
+	defer timer(req.URL.String(), "read")()
 
 	if sqlText, err := ioutil.ReadAll(req.Body); err != nil {
 		log.Panic(err)
@@ -136,14 +136,15 @@ func Read(w http.ResponseWriter, req *http.Request) {
 
 		}()
 
-		response := ""
+		response := make([]map[string]interface{}, 0)
+
 		if q, f := _cache.Get(queryId); f {
 
 			if err := _usage.Increment(queryId, 1); err != nil {
 				log.Printf("WARNING: Can not increment usage for %s", queryId)
 			}
 			log.Printf("Hit: %s", queryId)
-			response = q.(string)
+			response = q.([]map[string]interface{})
 
 		} else {
 
@@ -175,7 +176,6 @@ func Read(w http.ResponseWriter, req *http.Request) {
 					}
 				}
 
-				buffer := bytes.Buffer{}
 				tooBig := false
 				rowCount := 0
 
@@ -194,18 +194,12 @@ func Read(w http.ResponseWriter, req *http.Request) {
 						} else {
 
 							colCount := len(cols)
-							for i, c := range cols {
-								if i != 0 {
-									fmt.Fprintf(&buffer, "\t")
-								}
-								fmt.Fprintf(&buffer, "%v", c)
-							}
-							fmt.Fprintf(&buffer, "\n")
-
 							values := make([]interface{}, colCount)
 							valuePtrs := make([]interface{}, colCount)
 
 							for rows.Next() {
+								row := make(map[string]interface{}, 0)
+								response = append(response, row)
 								for i, _ := range cols {
 									valuePtrs[i] = &values[i]
 								}
@@ -222,38 +216,24 @@ func Read(w http.ResponseWriter, req *http.Request) {
 									} else {
 										v = val
 									}
-									if i != 0 {
-										fmt.Fprintf(&buffer, "\t")
-									}
 									if v != nil {
-										switch v.(type) {
-										case float64, int64:
-											format, ok := formats[reflect.ValueOf(v).Type()]
-											if !ok {
-												format = "v"
-											}
-											fmt.Fprintf(&buffer, fmt.Sprintf("%%%s", format), v)
-										default:
-											fmt.Fprintf(&buffer, "%v", v)
-										}
+										row[cols[i]] = v
 									}
 								}
-								fmt.Fprintf(&buffer, "\n")
 								rowCount++
 							}
 						}
 
-						response = buffer.String()
 						if !tooBig {
 							cost := 1 * time.Hour * time.Duration(int64(time.Since(t).Seconds()))
-							log.Printf("%s expiry: %+v", queryId, cost)
+							log.Printf("%s expiry:%+v rows:%d", queryId, cost, rowCount)
 							go _cache.Set(queryId, response, cost)
 						}
 					}
 				}
 			}()
 		}
-		fmt.Fprintf(w, response)
+		respond.With(w, req, http.StatusOK, response)
 	}
 }
 
